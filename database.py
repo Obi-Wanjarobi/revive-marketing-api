@@ -7,9 +7,9 @@ settings = get_settings()
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 
-engine = create_engine(settings.database_url, connect_args=connect_args)
+db_url = settings.database_url.replace("postgresql://", "postgresql+psycopg://", 1) if settings.database_url.startswith("postgresql://") else settings.database_url
+engine = create_engine(db_url, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
