@@ -14,7 +14,13 @@ app = FastAPI(title="Revive Marketing Platform API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten to the deployed frontend domain before go-live
+    # Restricted to the known first-party frontends. The public website posts
+    # leads server-side via a Netlify function (not a browser origin), so it does
+    # not need to be listed here.
+    allow_origins=[
+        "https://marketing.myrevivecapital.com",
+        "https://revivemarketing.netlify.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
