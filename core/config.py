@@ -11,6 +11,11 @@ class Settings(BaseSettings):
 
     internal_api_key: str = ""
 
+    # Dedicated key for the public website lead-intake endpoint (POST /leads).
+    # Held server-side by the Netlify lead proxy; never exposed in the browser.
+    # Falls back to internal_api_key if left blank.
+    leads_ingest_key: str = ""
+
     pulse_api_base: str = ""
     pulse_internal_key: str = ""
 
