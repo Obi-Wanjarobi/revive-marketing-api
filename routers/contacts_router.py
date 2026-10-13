@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_agent
 from database import get_db
-from models import Contact, SuppressedNumber
+from models import (
+    Contact,
+    SuppressedNumber,
+    CampaignContact,
+    CallSession,
+    BlastMessage,
+)
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -37,6 +43,7 @@ class ContactOut(BaseModel):
     consent_sms: bool
     consent_email: bool
     dnc_flag: bool
+    created_at: datetime | None = None  # when the lead/contact was received
 
     class Config:
         from_attributes = True
@@ -126,3 +133,41 @@ def suppress_contact(contact_id: str, reason: str = "manual", db: Session = Depe
         db.add(SuppressedNumber(email=contact.email, reason=reason))
     db.commit()
     return {"status": "suppressed", "contact_id": contact_id}
+
+
+@router.delete("/{contact_id}")
+def delete_contact(contact_id: str, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """
+    Permanently delete a contact record.
+
+    Compliance / safety:
+    - If the contact was DNC or opted out, the number/email is first written to
+      the suppressed_numbers list so a delete can NEVER resurrect a do-not-contact
+      number via a later import.
+    - Call history (call_sessions) is kept for the record and just detached
+      (contact_id set NULL), so dialing/compliance history is not lost.
+    - Rows that require this contact (campaign_contacts, blast_messages) are
+      removed first to satisfy foreign keys, then the contact is deleted.
+    """
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # Never let a delete un-suppress a do-not-contact number.
+    if contact.dnc_flag or contact.unsubscribed_sms or contact.unsubscribed_email:
+        if contact.phone:
+            db.add(SuppressedNumber(phone=contact.phone, reason="deleted_contact"))
+        if contact.email:
+            db.add(SuppressedNumber(email=contact.email, reason="deleted_contact"))
+
+    # Keep call history, just detach it from the deleted contact.
+    for cs in db.query(CallSession).filter(CallSession.contact_id == contact_id).all():
+        cs.contact_id = None
+
+    # Remove rows with a NOT NULL foreign key to this contact.
+    db.query(CampaignContact).filter(CampaignContact.contact_id == contact_id).delete(synchronize_session=False)
+    db.query(BlastMessage).filter(BlastMessage.contact_id == contact_id).delete(synchronize_session=False)
+
+    db.delete(contact)
+    db.commit()
+    return {"status": "deleted", "contact_id": contact_id}
