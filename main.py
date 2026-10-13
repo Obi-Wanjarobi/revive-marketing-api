@@ -18,6 +18,8 @@ app.add_middleware(
     # leads server-side via a Netlify function (not a browser origin), so it does
     # not need to be listed here.
     allow_origins=[
+        "https://mypulsemarketing.com",
+        "https://www.mypulsemarketing.com",
         "https://marketing.myrevivecapital.com",
         "https://revivemarketing.netlify.app",
     ],
