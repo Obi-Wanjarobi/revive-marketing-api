@@ -11,6 +11,7 @@ from auth import get_current_agent
 from database import get_db
 from models import (
     Contact,
+    Agent,
     SuppressedNumber,
     CampaignContact,
     CallSession,
@@ -44,6 +45,10 @@ class ContactOut(BaseModel):
     consent_email: bool
     dnc_flag: bool
     created_at: datetime | None = None  # when the lead/contact was received
+    assigned_agent_id: str | None = None  # lead owner (re-assignment)
+    notes: str | None = None  # shared lead notes
+    app_data: str | None = None  # focused 1003 intake (JSON string)
+    archived: bool | None = False  # cleaned out of the active list (reversible)
 
     class Config:
         from_attributes = True
@@ -171,3 +176,77 @@ def delete_contact(contact_id: str, db: Session = Depends(get_db), agent=Depends
     db.delete(contact)
     db.commit()
     return {"status": "deleted", "contact_id": contact_id}
+
+
+class AssignUpdate(BaseModel):
+    agent_id: str | None = None  # None = unassign
+
+
+@router.patch("/{contact_id}/assign", response_model=ContactOut)
+def assign_contact(contact_id: str, payload: AssignUpdate, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Assign (or unassign, with agent_id=null) a lead to an agent for ownership."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    aid = payload.agent_id or None
+    if aid is not None:
+        owner = db.query(Agent).filter(Agent.id == aid).first()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Agent not found")
+    contact.assigned_agent_id = aid
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+class NoteUpdate(BaseModel):
+    notes: str | None = None
+
+
+@router.patch("/{contact_id}/note", response_model=ContactOut)
+def update_note(contact_id: str, payload: NoteUpdate, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Save the shared note on a lead (relevant info / 1003 context)."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    contact.notes = (payload.notes or None)
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+class ApplicationUpdate(BaseModel):
+    app_data: str | None = None  # focused 1003 intake, JSON string
+    notes: str | None = None
+
+
+@router.patch("/{contact_id}/application", response_model=ContactOut)
+def update_application(contact_id: str, payload: ApplicationUpdate, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Save the focused 1003 intake (and optionally notes) on a lead. No SSN/income is expected here."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "app_data" in data:
+        contact.app_data = data["app_data"] or None
+    if "notes" in data:
+        contact.notes = data["notes"] or None
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+class ArchiveUpdate(BaseModel):
+    archived: bool = True
+
+
+@router.patch("/{contact_id}/archive", response_model=ContactOut)
+def archive_contact(contact_id: str, payload: ArchiveUpdate, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Archive (clean out) or restore a lead. Reversible — nothing is deleted."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    contact.archived = bool(payload.archived)
+    db.commit()
+    db.refresh(contact)
+    return contact
