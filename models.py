@@ -61,6 +61,8 @@ class Contact(Base):
     notes = Column(Text, nullable=True)  # shared lead notes (relevant info, 1003 context)
     app_data = Column(Text, nullable=True)  # focused 1003 intake (JSON string; no SSN/income stored here)
     archived = Column(Boolean, default=False)  # bad/worked numbers cleaned out of the active list (reversible)
+    next_follow_up = Column(DateTime, nullable=True)  # scheduled callback time (naive local; drives the "Due today" view)
+    follow_up_note = Column(String, nullable=True)  # short reason/label for the callback
 
 
 class SuppressedNumber(Base):

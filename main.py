@@ -18,6 +18,8 @@ with engine.begin() as _conn:
     _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT"))
     _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS app_data TEXT"))
     _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT FALSE"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS follow_up_note VARCHAR"))
 
 app = FastAPI(title="Revive Marketing Platform API", version="0.1.0")
 
