@@ -1,10 +1,12 @@
 import csv
 import io
+import json
 from datetime import datetime
 
 import phonenumbers
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_agent
@@ -33,6 +35,42 @@ def normalize_phone(raw: str | None) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Auto-assignment (round-robin / least-loaded).
+# New leads should never sit unowned. We assign each new lead to the ACTIVE
+# agent currently holding the fewest active (non-archived) leads, breaking ties
+# by agent creation order. In steady state this rotates evenly (round-robin),
+# and it self-heals if agents are added, deactivated, or leads are re-assigned.
+# ---------------------------------------------------------------------------
+def active_agents_ordered(db: Session):
+    return (
+        db.query(Agent)
+        .filter(Agent.active == True)  # noqa: E712
+        .order_by(Agent.created_at.asc(), Agent.id.asc())
+        .all()
+    )
+
+
+def assigned_counts(db: Session) -> dict:
+    rows = (
+        db.query(Contact.assigned_agent_id, func.count(Contact.id))
+        .filter(Contact.assigned_agent_id.isnot(None))
+        .filter((Contact.archived == False) | (Contact.archived.is_(None)))  # noqa: E712
+        .group_by(Contact.assigned_agent_id)
+        .all()
+    )
+    return {aid: n for aid, n in rows}
+
+
+def pick_rr_agent(db: Session):
+    """Return the agent_id of the least-loaded active agent (round-robin), or None."""
+    agents = active_agents_ordered(db)
+    if not agents:
+        return None
+    counts = assigned_counts(db)
+    return min(agents, key=lambda a: counts.get(a.id, 0)).id
+
+
 class ContactOut(BaseModel):
     id: str
     first_name: str | None
@@ -51,6 +89,7 @@ class ContactOut(BaseModel):
     archived: bool | None = False  # cleaned out of the active list (reversible)
     next_follow_up: datetime | None = None  # scheduled callback time
     follow_up_note: str | None = None  # short reason/label for the callback
+    notes_log: str | None = None  # JSON array of per-agent notes (who/what/when)
 
     class Config:
         from_attributes = True
@@ -85,6 +124,10 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db), agen
     reader = csv.DictReader(io.StringIO(content))
 
     created, skipped_invalid_phone = 0, 0
+    # Round-robin across active agents for the whole batch, keeping a running
+    # tally so the import is distributed evenly (not all onto one agent).
+    rr_agents = active_agents_ordered(db)
+    rr_counts = assigned_counts(db) if rr_agents else {}
     for row in reader:
         phone = normalize_phone(row.get("phone"))
         email = (row.get("email") or "").strip() or None
@@ -99,6 +142,10 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db), agen
             timezone=(row.get("timezone") or "").strip() or None,
             source="csv_upload",
         )
+        if rr_agents:
+            aid = min(rr_agents, key=lambda a: rr_counts.get(a.id, 0)).id
+            contact.assigned_agent_id = aid
+            rr_counts[aid] = rr_counts.get(aid, 0) + 1
         db.add(contact)
         created += 1
     db.commit()
@@ -271,6 +318,39 @@ def update_followup(contact_id: str, payload: FollowUpUpdate, db: Session = Depe
         contact.next_follow_up = data["next_follow_up"]
     if "follow_up_note" in data:
         contact.follow_up_note = (data["follow_up_note"] or None)
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+class NoteLogAdd(BaseModel):
+    text: str
+
+
+@router.post("/{contact_id}/notes-log", response_model=ContactOut)
+def add_note_log(contact_id: str, payload: NoteLogAdd, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Append an agent-attributed note to the lead's notes thread (who/what/when).
+    Append-only = an audit trail (IOTA). The shared 'notes' field is separate and
+    stays as the pinned summary everyone edits."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    text_val = (payload.text or "").strip()
+    if not text_val:
+        raise HTTPException(status_code=422, detail="Note text is required")
+    try:
+        log = json.loads(contact.notes_log) if contact.notes_log else []
+        if not isinstance(log, list):
+            log = []
+    except Exception:
+        log = []
+    log.append({
+        "agent_id": getattr(agent, "id", None),
+        "agent": (getattr(agent, "name", None) or getattr(agent, "username", None) or "Agent"),
+        "at": datetime.utcnow().isoformat(),
+        "text": text_val[:4000],
+    })
+    contact.notes_log = json.dumps(log)
     db.commit()
     db.refresh(contact)
     return contact
