@@ -63,6 +63,7 @@ class Contact(Base):
     archived = Column(Boolean, default=False)  # bad/worked numbers cleaned out of the active list (reversible)
     next_follow_up = Column(DateTime, nullable=True)  # scheduled callback time (naive local; drives the "Due today" view)
     follow_up_note = Column(String, nullable=True)  # short reason/label for the callback
+    notes_log = Column(Text, nullable=True)  # JSON array of per-agent notes: {agent_id, agent, at, text} (append-only audit)
 
 
 class SuppressedNumber(Base):
