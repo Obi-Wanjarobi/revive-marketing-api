@@ -49,6 +49,8 @@ class ContactOut(BaseModel):
     notes: str | None = None  # shared lead notes
     app_data: str | None = None  # focused 1003 intake (JSON string)
     archived: bool | None = False  # cleaned out of the active list (reversible)
+    next_follow_up: datetime | None = None  # scheduled callback time
+    follow_up_note: str | None = None  # short reason/label for the callback
 
     class Config:
         from_attributes = True
@@ -247,6 +249,28 @@ def archive_contact(contact_id: str, payload: ArchiveUpdate, db: Session = Depen
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     contact.archived = bool(payload.archived)
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+class FollowUpUpdate(BaseModel):
+    next_follow_up: datetime | None = None  # callback datetime; null clears it
+    follow_up_note: str | None = None       # short reason/label for the callback
+
+
+@router.patch("/{contact_id}/followup", response_model=ContactOut)
+def update_followup(contact_id: str, payload: FollowUpUpdate, db: Session = Depends(get_db), agent=Depends(get_current_agent)):
+    """Schedule (or clear, with next_follow_up=null) a callback/follow-up on a lead.
+    Powers the dashboard 'Due today' view. Reversible — just a timestamp on the record."""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "next_follow_up" in data:
+        contact.next_follow_up = data["next_follow_up"]
+    if "follow_up_note" in data:
+        contact.follow_up_note = (data["follow_up_note"] or None)
     db.commit()
     db.refresh(contact)
     return contact
