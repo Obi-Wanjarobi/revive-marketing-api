@@ -1,0 +1,56 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
+from database import Base, engine
+from routers import (
+    auth_router, agents_router, contacts_router,
+    campaigns_router, calls_router, blast_router,
+    compliance_router, webhooks_router, leads_router,
+)
+
+Base.metadata.create_all(bind=engine)
+
+# Lightweight additive migration: create_all() makes missing TABLES but not new
+# COLUMNS on existing ones. Add the lead-owner column if it isn't there yet.
+with engine.begin() as _conn:
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_agent_id VARCHAR"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS app_data TEXT"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT FALSE"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS follow_up_note VARCHAR"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes_log TEXT"))
+
+app = FastAPI(title="Revive Marketing Platform API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    # Restricted to the known first-party frontends. The public website posts
+    # leads server-side via a Netlify function (not a browser origin), so it does
+    # not need to be listed here.
+    allow_origins=[
+        "https://mypulsemarketing.com",
+        "https://www.mypulsemarketing.com",
+        "https://marketing.myrevivecapital.com",
+        "https://revivemarketing.netlify.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_router.router)
+app.include_router(agents_router.router)
+app.include_router(contacts_router.router)
+app.include_router(campaigns_router.router)
+app.include_router(calls_router.router)
+app.include_router(blast_router.router)
+app.include_router(compliance_router.router)
+app.include_router(webhooks_router.router)
+app.include_router(leads_router.router)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
