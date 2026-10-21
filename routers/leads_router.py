@@ -33,7 +33,7 @@ from core.config import get_settings
 from core.compliance import is_suppressed
 from database import get_db
 from models import Contact
-from routers.contacts_router import normalize_phone
+from routers.contacts_router import normalize_phone, pick_rr_agent
 
 settings = get_settings()
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -147,6 +147,14 @@ def create_lead(payload: LeadIn, db: Session = Depends(get_db)):
             source=payload.source or "website",
             tags=payload.tags or None,
         )
+        # Auto-assign each NEW lead round-robin so it never sits unowned
+        # (speed-to-lead: whoever owns it gets it in their "My leads" view).
+        try:
+            aid = pick_rr_agent(db)
+            if aid:
+                contact.assigned_agent_id = aid
+        except Exception:
+            pass
         db.add(contact)
 
     # CONSENT: never auto-enabled here. Record the (unverified) claim so a later
