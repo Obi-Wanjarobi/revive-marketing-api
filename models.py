@@ -57,6 +57,10 @@ class Contact(Base):
     unsubscribed_sms = Column(Boolean, default=False)  # STOP keyword received
 
     created_at = Column(DateTime, default=datetime.utcnow)
+    assigned_agent_id = Column(String, ForeignKey("agents.id"), nullable=True)  # lead owner (re-assignment)
+    notes = Column(Text, nullable=True)  # shared lead notes (relevant info, 1003 context)
+    app_data = Column(Text, nullable=True)  # focused 1003 intake (JSON string; no SSN/income stored here)
+    archived = Column(Boolean, default=False)  # bad/worked numbers cleaned out of the active list (reversible)
 
 
 class SuppressedNumber(Base):

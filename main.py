@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from database import Base, engine
 from routers import (
@@ -9,6 +10,14 @@ from routers import (
 )
 
 Base.metadata.create_all(bind=engine)
+
+# Lightweight additive migration: create_all() makes missing TABLES but not new
+# COLUMNS on existing ones. Add the lead-owner column if it isn't there yet.
+with engine.begin() as _conn:
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_agent_id VARCHAR"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes TEXT"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS app_data TEXT"))
+    _conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT FALSE"))
 
 app = FastAPI(title="Revive Marketing Platform API", version="0.1.0")
 
