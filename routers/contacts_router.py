@@ -139,7 +139,7 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db), agen
     for row in reader:
         phone = normalize_phone(row.get("phone"))
         email = (row.get("email") or "").strip() or None
-        if not phone and not email:
+        if not phone:  # 2026-11-14: leads without a valid phone are not accepted
             skipped_invalid_phone += 1
             continue
         contact = Contact(
