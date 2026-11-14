@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_agent, require_admin, hash_password
 from database import get_db
-from models import Agent, AgentRole, CallSession
+from models import Agent, AgentRole, CallSession, Campaign, Contact
 
 try:
     from core.sendgrid_client import send_email
@@ -254,3 +254,45 @@ def deactivate_agent(agent_id: str, db: Session = Depends(get_db), admin=Depends
     db.commit()
     db.refresh(target)
     return _out(target, owner)
+
+
+class MergeIn(BaseModel):
+    into_id: str
+    take_login: bool = True   # the kept user signs in with the removed user's username + password
+
+
+@router.post("/{agent_id}/merge")
+def merge_agent(agent_id: str, payload: MergeIn, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    """Fold a duplicate user into another (2026-11-14). Moves their leads, call history
+    and campaigns to the kept user, then removes (deactivates) the duplicate.
+    Nothing is deleted; the removed user stays under "Show removed users"."""
+    src = db.query(Agent).filter(Agent.id == agent_id).first()
+    dst = db.query(Agent).filter(Agent.id == payload.into_id).first()
+    if not src or not dst:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if src.id == dst.id:
+        raise HTTPException(status_code=400, detail="Pick a different user to merge into")
+    if src.id == _owner_id(db):
+        raise HTTPException(status_code=400, detail="Merge the other account into the owner instead")
+    moved_leads = (db.query(Contact).filter(Contact.assigned_agent_id == src.id)
+                   .update({Contact.assigned_agent_id: dst.id}, synchronize_session=False))
+    moved_calls = (db.query(CallSession).filter(CallSession.agent_id == src.id)
+                   .update({CallSession.agent_id: dst.id}, synchronize_session=False))
+    moved_camps = (db.query(Campaign).filter(Campaign.created_by == src.id)
+                   .update({Campaign.created_by: dst.id}, synchronize_session=False))
+    if not dst.email and src.email:
+        dst.email = src.email
+    if src.role == AgentRole.admin:
+        dst.role = AgentRole.admin
+    if payload.take_login:
+        login = src.username
+        src.username = f"{login}.merged-{src.id[:6]}"
+        db.flush()
+        dst.username = login
+        dst.password_hash = src.password_hash
+    src.active = False
+    dst.active = True
+    db.commit()
+    db.refresh(dst)
+    return _out(dst, _owner_id(db), merged_from=src.id, moved_leads=moved_leads,
+                moved_calls=moved_calls, moved_campaigns=moved_camps)
