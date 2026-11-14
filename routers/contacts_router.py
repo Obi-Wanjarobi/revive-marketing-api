@@ -83,6 +83,8 @@ class ContactOut(BaseModel):
     consent_email: bool
     dnc_flag: bool
     created_at: datetime | None = None  # when the lead/contact was received
+    source: str | None = None  # where the lead came from (website, csv_upload, ...)
+    consent_source: str | None = None  # how consent was captured / web-form claim note
     assigned_agent_id: str | None = None  # lead owner (re-assignment)
     notes: str | None = None  # shared lead notes
     app_data: str | None = None  # focused 1003 intake (JSON string)
@@ -109,7 +111,13 @@ def list_contacts(
     db: Session = Depends(get_db),
     agent=Depends(get_current_agent),
 ):
-    return db.query(Contact).offset(offset).limit(limit).all()
+    # Stable, newest-first order so offset paging never skips or repeats rows
+    # (unordered OFFSET paging in Postgres can drop the newest leads).
+    return (
+        db.query(Contact)
+        .order_by(Contact.created_at.desc().nullslast(), Contact.id.asc())
+        .offset(offset).limit(limit).all()
+    )
 
 
 @router.post("/import-csv")
