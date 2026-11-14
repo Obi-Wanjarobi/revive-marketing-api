@@ -101,8 +101,9 @@ class LeadResult(BaseModel):
 def create_lead(payload: LeadIn, db: Session = Depends(get_db)):
     phone = normalize_phone(payload.phone)
     email = (payload.email or "").strip().lower() or None
-    if not phone and not email:
-        raise HTTPException(status_code=422, detail="A valid phone number or email is required")
+    # 2026-11-14 (Boss): a lead without a valid phone number is not accepted.
+    if not phone:
+        raise HTTPException(status_code=422, detail="A valid phone number is required")
 
     # Dedupe: match an existing contact by phone first, then email.
     existing = None
