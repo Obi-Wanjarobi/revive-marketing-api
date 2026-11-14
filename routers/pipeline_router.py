@@ -35,6 +35,7 @@ from models import Agent
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 _SNAP = {"at": 0.0, "data": None}
+_INBOX = {"at": 0.0, "data": None}
 _TTL_SECONDS = 60
 _TZ = pytz.timezone("America/Los_Angeles")
 _PROSPECT = {"Lead", "Prospect", "Pitched", "Pre-Qual", "Pre-Approved"}
@@ -96,8 +97,8 @@ def _parse_date(v, now):
         return None
 
 
-def _fetch_snapshot(base: str, key: str) -> dict:
-    url = base.rstrip("/") + "/internal/pulse/snapshot?" + urllib.parse.urlencode({"key": "pipeline"})
+def _fetch_snapshot(base: str, key: str, name: str = "pipeline") -> dict:
+    url = base.rstrip("/") + "/internal/pulse/snapshot?" + urllib.parse.urlencode({"key": name})
     req = urllib.request.Request(url, headers={"x-internal-key": key, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=12) as r:
         body = json.loads(r.read().decode("utf-8") or "{}")
@@ -123,6 +124,29 @@ def _load():
     if isinstance(loans, dict):
         loans = list(loans.values())
     return [L for L in loans if isinstance(L, dict)], data.get("saved")
+
+
+def _inbox_items(agent):
+    """Pulse Review inbox triage (written twice daily by the scheduled Pulse Review into
+    snapshot key 'pulse_review_priorities'). Each item may carry `inbox` = the mailbox it
+    came from. Admins see every inbox; everyone else sees only items from their own inbox."""
+    s = get_settings()
+    if not s.pulse_api_base or not s.pulse_internal_key:
+        return None, None, "not_configured"
+    if _INBOX["data"] is None or time.time() - _INBOX["at"] >= _TTL_SECONDS:
+        try:
+            _INBOX["data"] = _fetch_snapshot(s.pulse_api_base, s.pulse_internal_key, "pulse_review_priorities")
+            _INBOX["at"] = time.time()
+        except Exception:
+            return None, None, "unreachable"
+    data = _INBOX["data"] or {}
+    items = [i for i in (data.get("items") or []) if isinstance(i, dict)]
+    is_admin = str(getattr(agent, "role", "")).split(".")[-1] == "admin"
+    if not is_admin:
+        me = str(getattr(agent, "email", "") or "").strip().lower()
+        items = [i for i in items if me and str(i.get("inbox") or "").strip().lower() == me]
+    keep = ("borrower", "loan", "action", "owner", "deadline", "urgent", "note", "inbox")
+    return [{k: i.get(k) for k in keep} for i in items][:25], data.get("saved"), ("all" if is_admin else "mine")
 
 
 @router.get("/summary")
@@ -296,6 +320,7 @@ def pipeline_intelligence(agent: Agent = Depends(get_current_agent)):
         "priorities": pri[:15] if is_admin else None,
         "priorities_count": len(pri),
         "priorities_restricted": not is_admin,
+        "inbox": dict(zip(("items", "saved", "scope"), _inbox_items(agent))),
         "as_of": saved,
         "source": "Pulse CRM pipeline backup",
     }
