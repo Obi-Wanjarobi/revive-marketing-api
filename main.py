@@ -7,7 +7,7 @@ from routers import (
     auth_router, agents_router, contacts_router,
     campaigns_router, calls_router, blast_router,
     compliance_router, webhooks_router, leads_router,
-    pipeline_router,
+    pipeline_router, market_router,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -51,6 +51,7 @@ app.include_router(compliance_router.router)
 app.include_router(webhooks_router.router)
 app.include_router(leads_router.router)
 app.include_router(pipeline_router.router)
+app.include_router(market_router.router)
 
 
 @app.get("/health")
