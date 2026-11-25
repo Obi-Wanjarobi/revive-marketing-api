@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_agent
 from database import get_db
+from core.lead_flow import set_owner
 from models import (
     Contact,
     Agent,
@@ -92,6 +93,8 @@ class ContactOut(BaseModel):
     next_follow_up: datetime | None = None  # scheduled callback time
     follow_up_note: str | None = None  # short reason/label for the callback
     notes_log: str | None = None  # JSON array of per-agent notes (who/what/when)
+    assigned_at: datetime | None = None  # when the current owner got it (stale clock)
+    last_called_at: datetime | None = None  # last dial attempt
 
     class Config:
         from_attributes = True
@@ -152,7 +155,7 @@ def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db), agen
         )
         if rr_agents:
             aid = min(rr_agents, key=lambda a: rr_counts.get(a.id, 0)).id
-            contact.assigned_agent_id = aid
+            set_owner(contact, aid, getattr(agent, "id", None), "intake_csv")
             rr_counts[aid] = rr_counts.get(aid, 0) + 1
         db.add(contact)
         created += 1
@@ -250,7 +253,8 @@ def assign_contact(contact_id: str, payload: AssignUpdate, db: Session = Depends
         owner = db.query(Agent).filter(Agent.id == aid).first()
         if not owner:
             raise HTTPException(status_code=404, detail="Agent not found")
-    contact.assigned_agent_id = aid
+    if aid != contact.assigned_agent_id:
+        set_owner(contact, aid, getattr(agent, "id", None), "manual")
     db.commit()
     db.refresh(contact)
     return contact

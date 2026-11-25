@@ -64,6 +64,10 @@ class Contact(Base):
     next_follow_up = Column(DateTime, nullable=True)  # scheduled callback time (naive local; drives the "Due today" view)
     follow_up_note = Column(String, nullable=True)  # short reason/label for the callback
     notes_log = Column(Text, nullable=True)  # JSON array of per-agent notes: {agent_id, agent, at, text} (append-only audit)
+    # Lead flow / floor manager (2026-11-25)
+    assigned_at = Column(DateTime, nullable=True)  # when the CURRENT owner got this lead (starts the stale clock)
+    last_called_at = Column(DateTime, nullable=True)  # last dial attempt by anyone (POST /calls/dial)
+    assignment_log = Column(Text, nullable=True)  # JSON array {at, from, to, by, reason} (append-only audit)
 
 
 class SuppressedNumber(Base):
@@ -143,3 +147,13 @@ class BlastMessage(Base):
     provider_sid = Column(String, nullable=True)
     error = Column(Text, nullable=True)
     sent_at = Column(DateTime, nullable=True)
+
+
+class AppSetting(Base):
+    """Small key/value store for admin-tunable settings (e.g. stale-lead window)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)

@@ -33,6 +33,7 @@ from core.config import get_settings
 from core.compliance import is_suppressed
 from database import get_db
 from models import Contact
+from core.lead_flow import set_owner
 from routers.contacts_router import normalize_phone, pick_rr_agent
 
 settings = get_settings()
@@ -153,7 +154,7 @@ def create_lead(payload: LeadIn, db: Session = Depends(get_db)):
         try:
             aid = pick_rr_agent(db)
             if aid:
-                contact.assigned_agent_id = aid
+                set_owner(contact, aid, "system", "intake_web")
         except Exception:
             pass
         db.add(contact)

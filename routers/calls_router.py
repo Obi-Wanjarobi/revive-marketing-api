@@ -65,6 +65,7 @@ def initiate_dial(payload: DialRequest, db: Session = Depends(get_db), agent: Ag
         started_at=datetime.utcnow(),
     )
     db.add(session)
+    contact.last_called_at = session.started_at  # stops the stale clock for this owner
     db.commit()
     db.refresh(session)
 
