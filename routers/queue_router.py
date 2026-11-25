@@ -11,15 +11,18 @@ Call queue + floor manager endpoints (2026-11-25).
 
 No phone numbers or emails are returned by the summary/team endpoints (names + counts only).
 """
+import hmac
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import get_current_agent, require_admin
 from core import lead_flow as lf
 from core.compliance import is_within_quiet_hours
+from core.config import get_settings
+from sqlalchemy import func
 from database import get_db
 from models import Agent, AgentRole, CallSession, Contact
 
@@ -178,3 +181,36 @@ def history(contact_id: str, db: Session = Depends(get_db), agent: Agent = Depen
             "assigned_at": c.assigned_at.isoformat() if c.assigned_at else None,
             "last_called_at": c.last_called_at.isoformat() if c.last_called_at else None,
             "log": lf._log(c)}
+
+
+# ---------------------------------------------------------------- Q central (server-to-server)
+def _require_q_key(x_q_key: str | None = Header(default=None)):
+    expected = get_settings().q_floor_key
+    if not expected or len(expected) < 24 or expected.startswith("change-me"):
+        raise HTTPException(status_code=503, detail="Q link is not configured")
+    if not x_q_key or not hmac.compare_digest(x_q_key, expected):
+        raise HTTPException(status_code=401, detail="Invalid Q key")
+
+
+@router.get("/q/summary", dependencies=[Depends(_require_q_key)])
+def q_summary(email: str, db: Session = Depends(get_db)):
+    """What Q needs to act as floor manager for ONE person, looked up by their email.
+    Names + counts only (no phone numbers or emails of leads). Admins also get the team view."""
+    em = (email or "").strip().lower()
+    a = (db.query(Agent).filter(func.lower(Agent.email) == em, Agent.active == True)  # noqa: E712
+         .order_by(Agent.created_at.asc()).first()) if em else None
+    if not a:
+        raise HTTPException(status_code=404, detail="No active Pulse Marketing user with that email")
+    now = datetime.utcnow()
+    q = _build(db, a.id, now)
+    out = {"me": _summary(db, a, now),
+           "next": [{"name": x["name"], "kind": x["kind"], "callable_now": x["callable_now"],
+                     "hours_left_before_reassign": x.get("hours_left_before_reassign")}
+                    for x in (q["follow_ups_due"] + q["uncalled"])[:5]],
+           "is_admin": _is_admin(a)}
+    if out["is_admin"]:
+        people = [_summary(db, p, now) for p in lf.active_agents(db)]
+        out["team"] = [{k: p[k] for k in ("name", "uncalled", "follow_ups_due", "about_to_reassign", "calls_last_24h")}
+                       for p in people]
+        out["needs_manager"] = len(lf.needs_manager(db, now))
+    return out

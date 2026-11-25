@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Falls back to internal_api_key if left blank.
     leads_ingest_key: str = ""
 
+    # Q central -> this API (floor manager). Dedicated key; Boss sets the SAME value
+    # here (Q_FLOOR_KEY) and on Railway q-central (Q_MARKETING_KEY). Fail closed if unset.
+    q_floor_key: str = ""
+
     pulse_api_base: str = ""
     pulse_internal_key: str = ""
 

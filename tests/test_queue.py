@@ -224,3 +224,26 @@ def test_manual_reassign_logged_and_settings_admin_only():
     assert lf.run_sweep(db, now=WED_10AM_PT + timedelta(hours=5))["moved_stale"] == 0
     assert client.post("/queue/sweep?dry_run=true", headers=hdr(adm)).status_code == 200
     db.close()
+
+
+def test_q_summary_server_key(monkeypatch):
+    from core.config import get_settings
+    db = SessionLocal()
+    a = mk_agent(db, "Ann", created=datetime(2026, 1, 1))
+    a.email = "Ann@Revive.test"
+    adm = mk_agent(db, "Jay", role=AgentRole.admin, created=datetime(2026, 1, 3))
+    adm.email = "jay@revive.test"
+    db.commit()
+    mk_lead(db, owner=a)
+    # unset key -> closed
+    monkeypatch.setattr(get_settings(), "q_floor_key", "")
+    assert client.get("/queue/q/summary?email=ann@revive.test").status_code == 503
+    monkeypatch.setattr(get_settings(), "q_floor_key", "k" * 32)
+    assert client.get("/queue/q/summary?email=ann@revive.test", headers={"X-Q-Key": "wrong"}).status_code == 401
+    r = client.get("/queue/q/summary?email=ann@revive.test", headers={"X-Q-Key": "k" * 32})
+    assert r.status_code == 200 and r.json()["me"]["uncalled"] == 1 and "team" not in r.json()
+    assert "+1949" not in str(r.json())  # no lead phone numbers leave
+    r = client.get("/queue/q/summary?email=jay@revive.test", headers={"X-Q-Key": "k" * 32}).json()
+    assert r["is_admin"] and {p["name"] for p in r["team"]} == {"Ann", "Jay"}
+    assert client.get("/queue/q/summary?email=nobody@x.test", headers={"X-Q-Key": "k" * 32}).status_code == 404
+    db.close()
