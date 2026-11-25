@@ -242,9 +242,9 @@ def start_background_sweeper(session_factory):
                 r = run_sweep(db)
                 n = r["assigned_unowned"] + r["moved_from_inactive"] + r["moved_stale"]
                 if n:
-                    log.info("lead sweep: %s", {k: r[k] for k in r if k != "changes"})
-            except Exception:  # never take the API down over a sweep
-                log.exception("lead sweep failed")
+                    print("[lead-sweep]", {k: r[k] for k in r if k != "changes"}, flush=True)
+            except Exception as exc:  # never take the API down over a sweep
+                print("[lead-sweep] failed:", repr(exc), flush=True)
                 db.rollback()
             finally:
                 db.close()
