@@ -247,3 +247,22 @@ def test_q_summary_server_key(monkeypatch):
     assert r["is_admin"] and {p["name"] for p in r["team"]} == {"Ann", "Jay"}
     assert client.get("/queue/q/summary?email=nobody@x.test", headers={"X-Q-Key": "k" * 32}).status_code == 404
     db.close()
+
+
+def test_q_team_reps(monkeypatch):
+    from core.config import get_settings
+    db = SessionLocal()
+    a = mk_agent(db, "Ann", created=datetime(2026, 1, 1)); a.email = "ann@revive.test"
+    b = mk_agent(db, "Bo", created=datetime(2026, 1, 2)); b.email = "bo@revive.test"
+    db.commit()
+    mk_lead(db, owner=a); mk_lead(db, owner=a, first="Kim"); mk_lead(db, owner=b)
+    monkeypatch.setattr(get_settings(), "q_floor_key", "")
+    assert client.get("/queue/q/team?emails=ann@revive.test").status_code == 503
+    monkeypatch.setattr(get_settings(), "q_floor_key", "k" * 32)
+    assert client.get("/queue/q/team?emails=ann@revive.test", headers={"X-Q-Key": "bad"}).status_code == 401
+    assert client.get("/queue/q/team?emails=", headers={"X-Q-Key": "k" * 32}).status_code == 400
+    r = client.get("/queue/q/team?emails=ANN@revive.test, bo@revive.test,ghost@revive.test", headers={"X-Q-Key": "k" * 32}).json()
+    assert {x["name"]: x["uncalled"] for x in r["reps"]} == {"Ann": 2, "Bo": 1}
+    assert r["not_found"] == ["ghost@revive.test"] and r["totals"]["uncalled"] == 3
+    assert "+1949" not in str(r) and "@" not in str(r["reps"])
+    db.close()

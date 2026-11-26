@@ -8,6 +8,8 @@ Call queue + floor manager endpoints (2026-11-25).
   PUT  /queue/settings       admin: change them
   POST /queue/sweep          admin: run the re-home pass now (?dry_run=true to preview)
   GET  /queue/history/{id}   who owned this lead and why
+  GET  /queue/q/summary      Q central (X-Q-Key): one person's floor numbers
+  GET  /queue/q/team         Q central (X-Q-Key): a team lead's reps (Q Training)
 
 No phone numbers or emails are returned by the summary/team endpoints (names + counts only).
 """
@@ -214,3 +216,26 @@ def q_summary(email: str, db: Session = Depends(get_db)):
                        for p in people]
         out["needs_manager"] = len(lf.needs_manager(db, now))
     return out
+
+
+@router.get("/q/team", dependencies=[Depends(_require_q_key)])
+def q_team(emails: str, db: Session = Depends(get_db)):
+    """Q Training (2026-11-25): a team lead's reps, by the emails Jay listed for that lead in Q.
+    Q decides who may see which reps; this returns names + counts only (no lead phones/emails).
+    Unknown or inactive emails are reported back as not_found (so Q can say so), never guessed."""
+    wanted = [e.strip().lower() for e in (emails or "").split(",") if e.strip()][:25]
+    if not wanted:
+        raise HTTPException(status_code=400, detail="emails required")
+    now = datetime.utcnow()
+    reps, not_found = [], []
+    for em in wanted:
+        a = (db.query(Agent).filter(func.lower(Agent.email) == em, Agent.active == True)  # noqa: E712
+             .order_by(Agent.created_at.asc()).first())
+        if not a:
+            not_found.append(em)
+            continue
+        s = _summary(db, a, now)
+        reps.append({k: s[k] for k in ("name", "uncalled", "follow_ups_due", "about_to_reassign", "callable_now",
+                                         "calls_last_24h", "stale_hours")})
+    return {"reps": reps, "not_found": not_found,
+            "totals": {k: sum(r[k] for r in reps) for k in ("uncalled", "follow_ups_due", "about_to_reassign", "calls_last_24h")}}
